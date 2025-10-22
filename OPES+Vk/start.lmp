@@ -1,0 +1,41 @@
+# ---------- Initialize Simulation ---------------------
+
+units      metal
+dimension 3
+boundary p p p
+atom_style          atomic
+
+read_data	${dataname}.data
+# ---------- Define Interatomic Potential ---------------------
+
+neighbor 0.1 bin
+neigh_modify delay 10 check no
+velocity all create ${tmy} ${lmpseed} mom yes rot yes dist gaussian
+pair_style  lj/cut 9.0
+pair_coeff 1 1  0.0103 3.405
+pair_modify tail yes
+
+timestep 0.01
+
+# ---------- Define Settings ---------------------
+# ---------- Run Minimization ---------------------
+
+thermo_style custom step temp lx ly lz pe etotal press vol
+
+
+
+
+
+reset_timestep 0
+
+
+thermo 1000
+dump 3 all custom 1000 dump.trj id type x y z
+fix p1 all plumed plumedfile ${plumedfilename} outfile plumed.out
+fix 1 all npt temp ${tmy} ${tmy} 0.01  iso 250 250 0.1
+run 10000000
+
+write_data fin.data nocoeff
+
+
+

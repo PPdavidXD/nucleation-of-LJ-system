@@ -1,0 +1,97 @@
+UNITS LENGTH=A TIME=fs
+ 
+
+# load interface for bias computation
+LOAD FILE=../pytorch_model_bias.so
+
+
+lambda: CONSTANT VALUE=-0.556
+
+
+GROUP ATOMS=1-2916 LABEL=ar
+GROUP ATOMS=1-1831,1833-2916 LABEL=else
+GROUP ATOMS=1832 LABEL=center
+
+
+DUMPATOMS FILE=trj.xyz STRIDE=500 ATOMS=ar UNITS=A
+##########################    SHORT RANGE PARAS     ######################
+q6: Q6 SPECIES=ar SWITCH={RATIONAL R_0=4.5 D_MAX=5.1}
+q6_ins: INSPHERE ATOM=center DATA=q6 RADIUS={RATIONAL R_0=19.8 D_MAX=20.5}  LOWMEM  HISTOGRAM={GAUSSIAN LOWER=0.3 UPPER=0.6 NBINS=5 SMEAR=0.05 }   
+
+##########################    MEDIUM RANGE PARAS     ######################
+laq6: LOCAL_AVERAGE SPECIES=q6 SWITCH={RATIONAL R_0=4.5 D_MAX=5.1}   LOWMEM MEAN
+laq6_ins: INSPHERE ATOM=center DATA=laq6 RADIUS={RATIONAL R_0=19.8 D_MAX=20.5}  MEAN MORE_THAN={RATIONAL R_0=0.325 } LOWMEM HISTOGRAM={GAUSSIAN LOWER=0.1 UPPER=0.55 NBINS=5 SMEAR=0.1} 
+laq6_outs: INSPHERE ATOM=center DATA=laq6 RADIUS={RATIONAL D_0=18 R_0=1.5 D_MAX=20}  MEAN MORE_THAN={RATIONAL R_0=0.325 } OUTSIDE LOWMEM
+
+
+##########################    entropy     ######################
+s2: PAIRENTROPIES SPECIES=ar MAXR=7.5 SIGMA=0.5 NHIST=51 LOWMEM
+s2_ins: INSPHERE ATOM=center DATA=s2 RADIUS={RATIONAL R_0=19.8 D_MAX=20.5}  MEAN MORE_THAN={RATIONAL R_0=-1.75 } HISTOGRAM={GAUSSIAN LOWER=-2.3 UPPER=-1.1 NBINS=5 SMEAR=0.2} LOWMEM
+
+##########################    NORMALIZATION     ######################
+d1: CUSTOM ARG=laq6_ins.mean var=z PERIODIC=NO FUNC=(z-0.181712)/0.286575
+d2: CUSTOM ARG=laq6_ins.morethan var=z PERIODIC=NO FUNC=(z-13.254999)/414.94662900000003
+d3: CUSTOM ARG=q6_ins.between-1 var=z PERIODIC=NO FUNC=(z-2.158724)/71.17224999999999
+d4: CUSTOM ARG=q6_ins.between-2 var=z PERIODIC=NO FUNC=(z-20.081167)/163.13117400000002
+d5: CUSTOM ARG=q6_ins.between-3 var=z PERIODIC=NO FUNC=(z-69.985312)/146.589652
+d6: CUSTOM ARG=q6_ins.between-4 var=z PERIODIC=NO FUNC=(z-49.719526)/205.112715
+d7: CUSTOM ARG=q6_ins.between-5 var=z PERIODIC=NO FUNC=(z-4.53408)/172.75068000000002
+d8: CUSTOM ARG=s2_ins.between-1 var=z PERIODIC=NO FUNC=(z-25.977307)/122.58477500000001
+d9: CUSTOM ARG=s2_ins.between-2 var=z PERIODIC=NO FUNC=(z-54.453061)/118.81758000000002
+d10: CUSTOM ARG=s2_ins.between-3 var=z PERIODIC=NO FUNC=(z-78.99548)/59.88422899999999
+d11: CUSTOM ARG=s2_ins.between-4 var=z PERIODIC=NO FUNC=(z-40.109326)/99.58024499999999
+d12: CUSTOM ARG=s2_ins.between-5 var=z PERIODIC=NO FUNC=(z-10.125296)/95.683549
+d13: CUSTOM ARG=laq6_ins.between-1 var=z PERIODIC=NO FUNC=(z-0.0)/200.0
+d14: CUSTOM ARG=laq6_ins.between-2 var=z PERIODIC=NO FUNC=(z-0.0)/250.0
+d15: CUSTOM ARG=laq6_ins.between-3 var=z PERIODIC=NO FUNC=(z-0.0)/130.0
+d16: CUSTOM ARG=laq6_ins.between-4 var=z PERIODIC=NO FUNC=(z-0.0)/150.0
+d17: CUSTOM ARG=laq6_ins.between-5 var=z PERIODIC=NO FUNC=(z-0.0)/250.0
+
+##########################    COMMITTOR BIAS     ######################
+z: PYTORCH_MODEL_BIAS FILE=../model_run_zeta.pt ARG=d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17 LAMBDA=1 EPSILON=1e-7
+
+q: CUSTOM ARG=z.node-0 var=z PERIODIC=NO FUNC=1/(1+exp(-3*z))
+
+# this is the total bias
+biasc: CUSTOM ARG=lambda,z.bias-0,q var=lbd,zbias,q PERIODIC=NO FUNC=lbd*(zbias+2*log(q+0.00000000001)+2*log(1.00000000001-q)+30)
+
+potential: BIASVALUE ARG=biasc
+
+##########################    UPPER WALL BIAS     ######################
+upwall: UPPER_WALLS ARG=laq6_outs.morethan AT=200 KAPPA=50.0 EXP=2 EPS=50
+
+##########################    OPES BIAS     ######################
+opes: OPES_METAD ...
+    FILE=KERNELS
+    ARG=z.node-0
+    BARRIER=15
+    SIGMA=ADAPTIVE
+    PACE=500
+    TEMP=67.0
+    #STATE_RFILE=rsState.data 
+    STATE_WFILE=State.data 
+    STATE_WSTRIDE=2000
+
+
+    #BIASFACTOR=inf
+    #COMPRESSION_THRESHOLD=0.5
+    #EXTRA_BIAS=upwall.bias
+...
+
+biasoc: CUSTOM ARG=biasc,opes.bias var=a,b PERIODIC=NO FUNC=a+b
+
+biasfull: CUSTOM ARG=biasc,opes.bias,upwall.bias var=a,b,c PERIODIC=NO FUNC=a+b+c
+
+
+
+PRINT FILE=normalized_d.dat  STRIDE=500 ARG=d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17
+
+PRINT FILE=COLVAR  STRIDE=500 ARG=laq6_ins.mean,laq6_ins.morethan,q6_ins.between-1,q6_ins.between-2,q6_ins.between-3,q6_ins.between-4,q6_ins.between-5,s2_ins.between-1,s2_ins.between-2,s2_ins.between-3,s2_ins.between-4,s2_ins.between-5,laq6_ins.between-1,laq6_ins.between-2,laq6_ins.between-3,laq6_ins.between-4,laq6_ins.between-5,q,z.node-0,upwall.bias,biasc,opes.bias,biasoc,biasfull
+
+DUMPDERIVATIVES FILE=deriv STRIDE=500 ARG=laq6_ins.mean,laq6_ins.morethan,q6_ins.between-1,q6_ins.between-2,q6_ins.between-3,q6_ins.between-4,q6_ins.between-5,s2_ins.between-1,s2_ins.between-2,s2_ins.between-3,s2_ins.between-4,s2_ins.between-5,laq6_ins.between-1,laq6_ins.between-2,laq6_ins.between-3,laq6_ins.between-4,laq6_ins.between-5
+
+
+
+
+DUMPMASSCHARGE FILE=mclist.data
+ENDPLUMED
